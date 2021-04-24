@@ -1,0 +1,107 @@
+zookeeper adminServer URL:
+	http://localhost:8080/commands
+need to enable in zookeeper.properties
+
+
+$ bin/zookeeper-server-start.sh ./config/zookeeper.properties
+$ bin/kafka-server-start.sh ./config/server.properties
+# default broker config for time semantics is log.message.timestamp.type=CreateTime -> this is "event" time and refers to the timestamp in the ProducerRecord
+
+
+$ bin/kafka-topics.sh --create \
+    --bootstrap-server localhost:9092 \
+    --replication-factor 1 \
+    --partitions 1 \
+    --topic bbg-approved
+
+$ bin/kafka-topics.sh --create \
+    --bootstrap-server localhost:9092 \
+    --replication-factor 1 \
+    --partitions 1 \
+    --topic bbg-cancel
+
+$ bin/kafka-topics.sh --create \
+    --bootstrap-server localhost:9092 \
+    --replication-factor 1 \
+    --partitions 1 \
+    --topic cache-operations \
+    --config cleanup.policy=compact
+
+$ bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe
+
+$ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-approved --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
+>{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "as","token":{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"},"approvalDetails": [{"_t": "ad","allocId": "123","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_123"},{"_t": "ad","allocId": "456","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_456"},{"_t": "ad","allocId": "789","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_789"}]}
+
+$ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-cancel --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
+>{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
+
+$ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+    --topic cache-operations \
+    --formatter kafka.tools.DefaultMessageFormatter \
+    --property print.key=true \
+    --property print.value=true \
+    --isolation-level read_committed \
+    --from-beginning
+
+
+# may need to temporarily set JAVA_HOME to 1.8 version
+$ export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64
+
+# CREATE MAVEN project -- this will create a dir named with the specified artifactId
+$ mvn archetype:generate \
+            -DarchetypeGroupId=org.apache.kafka \
+            -DarchetypeArtifactId=streams-quickstart-java \
+            -DarchetypeVersion=2.8.0 \
+            -DgroupId=sean \
+            -DartifactId=sean_kafka_streams_poc \
+            -Dversion=0.1 \
+            -Dpackage=sean
+$ mvn eclipse:eclipse  # this generates/updates .classpath/.project files, so if you need to update 
+                       # EclipseIDE classpath after updating pom.xml, re-run this task
+# can import into eclipse now
+
+$ mvn clean package
+$ mvn exec:java -Dexec.mainClass=sean.RetractApproval
+
+
+# this command uses jars in ./libs/ only
+$ bin/kafka-run-class.sh org.apache.kafka.streams.examples.wordcount.WordCountDemo
+
+
+# reset Streams application state
+$ rm -fr /tmp/kafka-streams/approval-cache-processor/
+
+# reset kakfa brokers
+$ rm -fr /tmp/zookeeper/
+$ rm -fr /tmp/kafka-logs/
+
+
+# delete topic
+$ bin/kafka-topics.sh --zookeeper localhost:2181 --topic cache-operations --delete
+  OR
+$ bin/zookeeper-shell.sh localhost:2181  # this is interactive shell for zookeeper
+get /brokers/ids/0
+ls /brokers/topics
+deleteall /brokers/topics/yourtopic
+# need to restart kafka to take effect since you are deleting on zookeeper directly
+
+
+#---- ABOUT "time" IN Kafka Streams ----#
+# the default Kafka Streams extractor is "FailOnInvalidTimestamp" which retrieves the built-in timestamp that is automatically embedded into Kafka message by the Kafka producer client (either "CreateTime" or "LogAppendTime" as in the broker config "log.message.timestamp.type")
+# for details, read:
+# https://kafka.apache.org/28/documentation/streams/developer-guide/config-streams.html#timestamp-extractor
+# https://kafka.apache.org/28/javadoc/org/apache/kafka/streams/processor/FailOnInvalidTimestamp.html
+# https://kafka.apache.org/28/javadoc/org/apache/kafka/clients/producer/ProducerRecord.html
+
+
+# GlobalStateManagerImpl.restoreState compares offset (local) and highWatermark (broker) checkpoints, sometimes during debugging this can get out of sync and the GlobalStreamThread will never be able to get into RUNNING state.
+If this happens, manually edit the local offset checkpoint file to be consistent with highWatermark.
+$ vi /tmp/kafka-streams/approval-cache-processor/global/.checkpoint
+
+
+Eclipse IDE Debug Shell to check the content of the store:
+    org.apache.kafka.streams.state.KeyValueIterator itr = store.all(); while (itr.hasNext()) System.out.println(itr.next());
+
+    store.get(new Token("789", TokenType.AllocToken, Entity.Bloomberg))
+
+    store.put(new Token("789", TokenType.AllocToken, Entity.Bloomberg), ValueAndTimestamp.make(new ApprovalDetails("789_sean_hack", TokenType.AllocToken, Entity.Bloomberg, null), org.apache.kafka.common.utils.Time.SYSTEM.milliseconds()))
