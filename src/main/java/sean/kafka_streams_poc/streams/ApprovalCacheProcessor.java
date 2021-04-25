@@ -59,7 +59,7 @@ public class ApprovalCacheProcessor implements CommandLineRunner {
 	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
 	
 	@PostConstruct
-    public void init() {
+    private void init() {
         Properties props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "approval-cache-processor");
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
@@ -102,13 +102,13 @@ public class ApprovalCacheProcessor implements CommandLineRunner {
         // MeteredTimestampedKeyValueStore<Token, ApprovalDetails> store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", new MeteredTimestampedKeyValueStoreType<>()));        
     }
     
-    public ReadOnlyKeyValueStore<Token, ApprovalDetails> getStore() {
+    public ReadOnlyKeyValueStore<Token, ApprovalDetails> getReadOnlyStore() {
     	verify(started, "streams has not started yet");
 		return store;
 	}
 
 	@PreDestroy
-    public void destroy() {
+    private void destroy() {
     	streams.close();
     }
     

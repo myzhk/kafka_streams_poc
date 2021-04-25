@@ -43,31 +43,6 @@ $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --isolation-level read_committed \
     --from-beginning
 
-
-# may need to temporarily set JAVA_HOME to 1.8 version
-$ export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64
-
-# CREATE MAVEN project -- this will create a dir named with the specified artifactId
-$ mvn archetype:generate \
-            -DarchetypeGroupId=org.apache.kafka \
-            -DarchetypeArtifactId=streams-quickstart-java \
-            -DarchetypeVersion=2.8.0 \
-            -DgroupId=sean \
-            -DartifactId=sean_kafka_streams_poc \
-            -Dversion=0.1 \
-            -Dpackage=sean
-$ mvn eclipse:eclipse  # this generates/updates .classpath/.project files, so if you need to update 
-                       # EclipseIDE classpath after updating pom.xml, re-run this task
-# can import into eclipse now
-
-$ mvn clean package
-$ mvn exec:java -Dexec.mainClass=sean.RetractApproval
-
-
-# this command uses jars in ./libs/ only
-$ bin/kafka-run-class.sh org.apache.kafka.streams.examples.wordcount.WordCountDemo
-
-
 # reset Streams application state
 $ rm -fr /tmp/kafka-streams/approval-cache-processor/
 
@@ -105,3 +80,43 @@ Eclipse IDE Debug Shell to check the content of the store:
     store.get(new Token("789", TokenType.AllocToken, Entity.Bloomberg))
 
     store.put(new Token("789", TokenType.AllocToken, Entity.Bloomberg), ValueAndTimestamp.make(new ApprovalDetails("789_sean_hack", TokenType.AllocToken, Entity.Bloomberg, null), org.apache.kafka.common.utils.Time.SYSTEM.milliseconds()))
+
+
+
+#--- GRADLE STUFF ---# graceful shutdown doesn't work that well, so install Spring Boot Dashboard in Eclipse and use that
+$ gradle clean build
+$ gradle bootRun
+
+# shutdown hooks are not called when run with "gradle bootRun" and Ctrl-C, hence Streams application may not close gracefully
+# someone mentioned the problem may be the gradle daemon - so need to run gradle command without daemon
+# https://github.com/gradle/gradle/issues/11517#issuecomment-602632296
+
+$ export GRADLE_OPTS="-XX:MaxMetaspaceSize=256m -XX:+HeapDumpOnOutOfMemoryError -Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.country=US -Duser.language=en -Duser.variant"
+$ gradle bootRun --no-daemon
+
+# however this still doesn't work! I have find the pid and use "kill 12345" or "kill -2 12345" command
+
+$ gradle --stop    # stop daemon
+$ gradle --status  # check daemon status
+
+
+
+#--- MAVEN STUFF ---# this is for old project. New Spring Boot based project uses gradle.
+# may need to temporarily set JAVA_HOME to 1.8 version
+$ export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64
+
+# CREATE MAVEN project -- this will create a dir named with the specified artifactId
+$ mvn archetype:generate \
+            -DarchetypeGroupId=org.apache.kafka \
+            -DarchetypeArtifactId=streams-quickstart-java \
+            -DarchetypeVersion=2.8.0 \
+            -DgroupId=sean \
+            -DartifactId=sean_kafka_streams_poc \
+            -Dversion=0.1 \
+            -Dpackage=sean
+$ mvn eclipse:eclipse  # this generates/updates .classpath/.project files, so if you need to update 
+                       # EclipseIDE classpath after updating pom.xml, re-run this task
+# can import into eclipse now
+
+$ mvn clean package
+$ mvn exec:java -Dexec.mainClass=sean.RetractApproval
