@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Properties;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.kafka.common.utils.Bytes;
@@ -32,7 +31,7 @@ import org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStore;
 import org.apache.kafka.streams.state.internals.StateStoreProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 import com.google.common.base.Objects;
@@ -47,14 +46,14 @@ import sean.kafka_streams_poc.domain.TokenType;
 import sean.kafka_streams_poc.serdes.JSONSerde;
 
 @Component
-public class ApprovalCacheProcessor implements CommandLineRunner {
+public class ApprovalCacheProcessor implements SmartLifecycle {
 
 	static final Logger LOG = LoggerFactory.getLogger(ApprovalCacheProcessor.class);
 	
 	static final CancelJoiner CANCEL_LEFT_JOINER = new CancelJoiner();
 	static final ToCacheEntryMapper TO_CACHE_ENTRY_MAPPER = new ToCacheEntryMapper();
 	
-	private volatile boolean started;
+	private volatile boolean running;
 	private KafkaStreams streams;
 	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
 	
@@ -86,31 +85,46 @@ public class ApprovalCacheProcessor implements CommandLineRunner {
         
         final Topology topology = builder.build();
         streams = new KafkaStreams(topology, props);
-        started = false;
         
         LOG.info(topology.describe().toString());
     }
 	
-    public void run(String... args) {
+	@Override
+	public void stop() {
+		this.running = false;
+		streams.close();
+	}
+
+	@Override
+	public boolean isRunning() {
+		return this.running;
+	}
+    
+	// right before WebServer starts up
+	// see {@link WebServerStartStopLifecycle}
+	@Override
+	public int getPhase() {
+		return Integer.MAX_VALUE - 2;
+	}
+	
+	@Override
+	public void start() {
     	streams.start();
-    	started = true;
         
         // see {@link GlobalStateStoreProvider#stores(String, QueryableStoreType)} for how StateStoreProvider wraps an read-only facade on top of the underlying store
         store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", QueryableStoreTypes.<Token, ApprovalDetails>keyValueStore()));
         
         // this is a write-able store, but do we really want to do it?
-        // MeteredTimestampedKeyValueStore<Token, ApprovalDetails> store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", new MeteredTimestampedKeyValueStoreType<>()));        
+        // MeteredTimestampedKeyValueStore<Token, ApprovalDetails> store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", new MeteredTimestampedKeyValueStoreType<>()));
+        
+        this.running = true;
     }
     
+	// store is guaranteed to be available when REST controller accesses it, because web server's start phase is Integer.MAX_VALUE - 1
+	// see {@link WebServerStartStopLifecycle}
     public ReadOnlyKeyValueStore<Token, ApprovalDetails> getReadOnlyStore() {
-    	verify(started, "streams has not started yet");
 		return store;
 	}
-
-	@PreDestroy
-    private void destroy() {
-    	streams.close();
-    }
     
     static class CancelJoiner implements ValueJoiner<ApprovalDetails, ApprovalCancel, ApprovalDetailsWithProcessingInstruction> {
 		@Override
@@ -152,5 +166,6 @@ public class ApprovalCacheProcessor implements CommandLineRunner {
 			return storeProvider.stores(storeName, this).get(0);
 		}
     }
-    
+
+
 }
