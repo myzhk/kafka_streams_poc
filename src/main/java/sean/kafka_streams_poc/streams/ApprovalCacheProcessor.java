@@ -10,6 +10,8 @@ import java.util.Properties;
 import javax.annotation.PostConstruct;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.KeyValue;
@@ -57,11 +59,14 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	private KafkaStreams streams;
 	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
 	
+	private KafkaProducer<Token, ApprovalDetails> producer;
+	
 	@PostConstruct
     private void init() {
         Properties props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "approval-cache-processor");
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(StreamsConfig.STATE_DIR_CONFIG, "/home/Pi/tmp/kafka-streams");
         props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_BETA);
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, JSONSerde.class);
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JSONSerde.class);
@@ -87,6 +92,14 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
         streams = new KafkaStreams(topology, props);
         
         LOG.info(topology.describe().toString());
+        
+		Properties producerProps = new Properties();
+		producerProps.put("bootstrap.servers", "localhost:9092");
+		producerProps.put("enable.idempotence", true);
+		producerProps.put("key.serializer", JSONSerde.class);
+		producerProps.put("value.serializer", JSONSerde.class);
+
+		this.producer = new KafkaProducer<>(producerProps);
     }
 	
 	@Override
@@ -126,6 +139,10 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 		return store;
 	}
     
+    public void updateApprovalDetails(ApprovalDetails ad) {
+    	producer.send(new ProducerRecord<Token, ApprovalDetails>("cache-operations", ad.token, ad));
+    }
+    
     static class CancelJoiner implements ValueJoiner<ApprovalDetails, ApprovalCancel, ApprovalDetailsWithProcessingInstruction> {
 		@Override
 		public ApprovalDetailsWithProcessingInstruction apply(ApprovalDetails value1, ApprovalCancel value2) {
@@ -136,18 +153,18 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
     
     static class ToCacheEntryMapper implements KeyValueMapper<Token, ApprovalDetailsWithProcessingInstruction, List<KeyValue<Token, ApprovalDetails>>> {
 		@Override
-		public List<KeyValue<Token, ApprovalDetails>> apply(Token key, ApprovalDetailsWithProcessingInstruction value) {
-			verify(key.type == TokenType.EventToken, "[%s] key Token's type is not %s", this.getClass().getSimpleName(), TokenType.EventToken);
-			verify(Objects.equal(key, value.token), "[%s] Token in ApprovalDetails does not match Token key", this.getClass().getSimpleName());
-			verify(CollectionUtils.isNotEmpty(value.approvalDetails), "[%s] input ApprovalDetails is empty", this.getClass().getSimpleName());
+		public List<KeyValue<Token, ApprovalDetails>> apply(Token token, ApprovalDetailsWithProcessingInstruction detailsWithInstruction) {
+			verify(token.type == TokenType.EventToken, "[%s] key Token's type is not %s", this.getClass().getSimpleName(), TokenType.EventToken);
+			verify(Objects.equal(token, detailsWithInstruction.token), "[%s] Token in ApprovalDetails does not match Token key", this.getClass().getSimpleName());
+			verify(CollectionUtils.isNotEmpty(detailsWithInstruction.approvalDetails), "[%s] input ApprovalDetails is empty", this.getClass().getSimpleName());
 			
-			List<KeyValue<Token, ApprovalDetails>> result = new ArrayList<>(value.approvalDetails.size());
-			result.add(KeyValue.pair(key, value.delete ? null : value.getApprovalDetails()));
+			List<KeyValue<Token, ApprovalDetails>> result = new ArrayList<>(detailsWithInstruction.approvalDetails.size());
+			result.add(KeyValue.pair(token, detailsWithInstruction.delete ? null : detailsWithInstruction.getApprovalDetails()));
 			
-			for (ApprovalDetail ad: value.approvalDetails) {
-				Token allocToken = new Token(ad.allocId, TokenType.AllocToken, key.entity);
-				ApprovalDetails allocApprovalDetails = value.delete ? null : new ApprovalDetails(allocToken, ImmutableList.of(ad));
-				result.add(KeyValue.pair(allocToken, allocApprovalDetails));
+			for (ApprovalDetail allocAd: detailsWithInstruction.approvalDetails) {
+				Token allocToken = new Token(allocAd.allocId, TokenType.AllocToken, allocAd.entity);
+				ApprovalDetails allocAds = detailsWithInstruction.delete ? null : new ApprovalDetails(allocToken, ImmutableList.of(allocAd));
+				result.add(KeyValue.pair(allocToken, allocAds));
 			}
 			
 			return result;
@@ -166,6 +183,5 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 			return storeProvider.stores(storeName, this).get(0);
 		}
     }
-
 
 }

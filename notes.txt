@@ -30,7 +30,8 @@ $ bin/kafka-topics.sh --create \
 $ bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe
 
 $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-approved --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
->{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "as","token":{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"},"approvalDetails": [{"_t": "ad","allocId": "123","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_123"},{"_t": "ad","allocId": "456","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_456"},{"_t": "ad","allocId": "789","economics": "some_details","entity": "Bloomberg","taserApprovalId": "taser_789"}]}
+>{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t":"as","token":{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"},"approvalDetails":[{"_t":"ad","allocId":"123_a","entity":"Bloomberg","taserApprovalId":"taser_123_a","economics":"some_details","marked":false},{"_t":"ad","allocId":"123_b","entity":"Bloomberg","taserApprovalId":"taser_123_b","economics":"some_details_special","marked":false},{"_t":"ad","allocId":"123_c","entity":"Bloomberg","taserApprovalId":"taser_123_c","economics":"some_details","marked":false}]}
+>{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"}|{"_t":"as","token":{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"},"approvalDetails":[{"_t":"ad","allocId":"888_a","entity":"Bloomberg","taserApprovalId":"taser_888_a","economics":"some_details","marked":false},{"_t":"ad","allocId":"888_b","entity":"Bloomberg","taserApprovalId":"taser_888_b","economics":"some_details","marked":false}]}
 
 $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-cancel --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
 >{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
@@ -128,3 +129,43 @@ $ mvn eclipse:eclipse  # this generates/updates .classpath/.project files, so if
 
 $ mvn clean package
 $ mvn exec:java -Dexec.mainClass=sean.RetractApproval
+
+
+QUESTIONS:
+0. should server really handle updating the cache? why can't client do it?
+   if server, how long should server wait before checking the store after producing the update message? currently every 10ms
+              do we really need to modify both event-level and alloc-level cache entry?
+
+1. configurations
+    message retention period for different topics? 1 week? how much disk space will it use?
+    max message size?
+    how long should the join window be? 1 hour?
+    what time semantics to use? event time?
+    use avro serialization?
+
+2. where to store zookeeper/kafka broker/kafka streams app logs? local disk or NFS?
+
+3. how to restart streams app processing from a certain offset?
+
+4. how to deploy? one streams app per SEF, plus one for global table?
+
+5. how to write testcases for Kafka Streams
+
+6. what failure scenarios to test for?
+   invalid message - how to remove that message?
+   crash streams app
+   crash kafka broker node - does firm have farm? how reliable?
+   crash zookeeper node - does firm have farm? how reliable?
+
+7. test throughput and latency?
+
+8. what is the best way to monitor zookeeper/kafka broker/kafka streams app health? 
+   use proper monitoring tools, or watch logs for exceptions?
+   seen this error once due to POOR exception handling:
+      "All stream threads have died. The instance will be in error state and should be closed.""
+
+9. how to manipulate the store at runtime? JMX or REST?
+
+10. can we deploy this solution to run in parallel with current?
+
+12. can Triclear leverage this? compare with camel and spring integrations, which both have persistent stores for EIP...
