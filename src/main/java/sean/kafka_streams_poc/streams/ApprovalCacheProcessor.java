@@ -75,6 +75,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JSONSerde.class);
         props.put(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG, LogAndContinueExceptionHandler.class);
         props.put(StreamsConfig.DEFAULT_PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG, ProductionLogAndContinueExceptionHandler.class);
+        props.put(StreamsConfig.TASK_TIMEOUT_MS_CONFIG, 10000);
         
         final StreamsBuilder builder = new StreamsBuilder();
         
