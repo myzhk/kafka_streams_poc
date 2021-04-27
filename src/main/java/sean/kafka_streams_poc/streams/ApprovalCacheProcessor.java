@@ -1,10 +1,9 @@
 package sean.kafka_streams_poc.streams;
 
-import static com.google.common.base.Verify.verify;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 import javax.annotation.PostConstruct;
@@ -19,10 +18,13 @@ import org.apache.kafka.streams.StoreQueryParameters;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.Topology;
+import org.apache.kafka.streams.errors.LogAndContinueExceptionHandler;
+import org.apache.kafka.streams.kstream.Branched;
 import org.apache.kafka.streams.kstream.JoinWindows;
 import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.KeyValueMapper;
 import org.apache.kafka.streams.kstream.Materialized;
+import org.apache.kafka.streams.kstream.Named;
 import org.apache.kafka.streams.kstream.ValueJoiner;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.state.KeyValueStore;
@@ -46,6 +48,7 @@ import sean.kafka_streams_poc.domain.ApprovalDetailsWithProcessingInstruction;
 import sean.kafka_streams_poc.domain.Token;
 import sean.kafka_streams_poc.domain.TokenType;
 import sean.kafka_streams_poc.serdes.JSONSerde;
+import sean.kafka_streams_poc.streams.exception.handler.ProductionLogAndContinueExceptionHandler;
 
 @Component
 public class ApprovalCacheProcessor implements SmartLifecycle {
@@ -70,17 +73,31 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
         props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_BETA);
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, JSONSerde.class);
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JSONSerde.class);
+        props.put(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG, LogAndContinueExceptionHandler.class);
+        props.put(StreamsConfig.DEFAULT_PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG, ProductionLogAndContinueExceptionHandler.class);
         
         final StreamsBuilder builder = new StreamsBuilder();
-        KStream<Token, ApprovalDetails> approvedStream = builder.stream("bbg-approved");
+        
         KStream<Token, ApprovalCancel> cancelStream = builder.stream("bbg-cancel");
-
-        approvedStream.leftJoin(cancelStream, 
-        		                CANCEL_LEFT_JOINER, 
-        		                JoinWindows.of(Duration.ofMinutes(2)))
-                      .flatMap(TO_CACHE_ENTRY_MAPPER)
-                      .to("cache-operations");
-      
+        
+        Map<String, KStream<Token, ApprovalDetails>> approvedStreamMap = builder.<Token, ApprovalDetails>stream("bbg-approved")
+        		.split(Named.as("bbg-approved-"))
+        		.branch((t, ad) -> t == null ||
+                                   ad == null ||
+                                   TokenType.EventToken != t.type ||
+                                   !Objects.equal(t, ad.token) ||
+                                   CollectionUtils.isEmpty(ad.approvalDetails), 
+                        Branched.as("invalid"))
+        		.defaultBranch(Branched.as("valid"));
+        
+        approvedStreamMap.get("bbg-approved-invalid").to("bbg-approved-invalid");
+        approvedStreamMap.get("bbg-approved-valid")
+                         .leftJoin(cancelStream, 
+                                   CANCEL_LEFT_JOINER,
+                                   JoinWindows.of(Duration.ofMinutes(2)))
+                         .flatMap(TO_CACHE_ENTRY_MAPPER)
+                         .to("cache-operations");
+        
         // KTable is always timestamped!
         // https://kafka.apache.org/documentation/streams/developer-guide/processor-api.html#timestamped-state-stores
         // see {@link TableSourceNode#writeToTopology(InternalTopologyBuilder)}
@@ -129,6 +146,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
         
         // this is a write-able store, but do we really want to do it?
         // MeteredTimestampedKeyValueStore<Token, ApprovalDetails> store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", new MeteredTimestampedKeyValueStoreType<>()));
+        // store.put(new Token("789", TokenType.AllocToken, Entity.Bloomberg), ValueAndTimestamp.make(new ApprovalDetails("789_sean_hack", TokenType.AllocToken, Entity.Bloomberg, null), Time.SYSTEM.milliseconds()));
         
         this.running = true;
     }
@@ -146,7 +164,13 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
     static class CancelJoiner implements ValueJoiner<ApprovalDetails, ApprovalCancel, ApprovalDetailsWithProcessingInstruction> {
 		@Override
 		public ApprovalDetailsWithProcessingInstruction apply(ApprovalDetails value1, ApprovalCancel value2) {
-			verify(value1.token != null && value1.token.type == TokenType.EventToken, "[%s] input approval token's type is not %s", this.getClass().getSimpleName(), TokenType.EventToken);
+			// to reproduce a RecordTooLargeException, and the app to fail to restart due to offset/highWatermark inconsistency - see {@link GlobalStateManagerImpl#restoreState}
+			/*ApprovalDetailsWithProcessingInstruction adsi = new ApprovalDetailsWithProcessingInstruction(false, value1.token, new ArrayList<>());
+			for (int i = 0; i < 10000; i++) {
+				adsi.approvalDetails.add(value1.approvalDetails.get(0));
+			}
+			return adsi; */
+			
 			return new ApprovalDetailsWithProcessingInstruction(value2 == null ? false : true, value1.token, value1.approvalDetails);
 		}
     }
@@ -154,10 +178,6 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
     static class ToCacheEntryMapper implements KeyValueMapper<Token, ApprovalDetailsWithProcessingInstruction, List<KeyValue<Token, ApprovalDetails>>> {
 		@Override
 		public List<KeyValue<Token, ApprovalDetails>> apply(Token token, ApprovalDetailsWithProcessingInstruction detailsWithInstruction) {
-			verify(token.type == TokenType.EventToken, "[%s] key Token's type is not %s", this.getClass().getSimpleName(), TokenType.EventToken);
-			verify(Objects.equal(token, detailsWithInstruction.token), "[%s] Token in ApprovalDetails does not match Token key", this.getClass().getSimpleName());
-			verify(CollectionUtils.isNotEmpty(detailsWithInstruction.approvalDetails), "[%s] input ApprovalDetails is empty", this.getClass().getSimpleName());
-			
 			List<KeyValue<Token, ApprovalDetails>> result = new ArrayList<>(detailsWithInstruction.approvalDetails.size());
 			result.add(KeyValue.pair(token, detailsWithInstruction.delete ? null : detailsWithInstruction.getApprovalDetails()));
 			

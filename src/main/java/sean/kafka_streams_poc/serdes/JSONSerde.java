@@ -11,8 +11,19 @@ import org.apache.kafka.common.serialization.Serializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class JSONSerde<T extends JSONSerdeCompatible> implements Serializer<T>, Deserializer<T>, Serde<T> {
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    
+	public static class SingletonHolder {
+        @SuppressWarnings("rawtypes")
+		public static final JSONSerde HOLDER_INSTANCE = new JSONSerde();
+    }
 
+    @SuppressWarnings("rawtypes")
+	public static JSONSerde getInstance() {
+        return SingletonHolder.HOLDER_INSTANCE;
+    }
+	
+	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    
     @Override
     public void configure(final Map<String, ?> configs, final boolean isKey) {}
 

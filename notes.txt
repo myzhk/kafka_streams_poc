@@ -18,6 +18,12 @@ $ bin/kafka-topics.sh --create \
     --bootstrap-server localhost:9092 \
     --replication-factor 1 \
     --partitions 1 \
+    --topic bbg-approved-invalid
+
+$ bin/kafka-topics.sh --create \
+    --bootstrap-server localhost:9092 \
+    --replication-factor 1 \
+    --partitions 1 \
     --topic bbg-cancel
 
 $ bin/kafka-topics.sh --create \
@@ -34,10 +40,18 @@ $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-ap
 >{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"}|{"_t":"as","token":{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"},"approvalDetails":[{"_t":"ad","allocId":"888_a","entity":"Bloomberg","taserApprovalId":"taser_888_a","economics":"some_details","marked":false},{"_t":"ad","allocId":"888_b","entity":"Bloomberg","taserApprovalId":"taser_888_b","economics":"some_details","marked":false}]}
 
 $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-cancel --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
->{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
+>{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
 
 $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --topic cache-operations \
+    --formatter kafka.tools.DefaultMessageFormatter \
+    --property print.key=true \
+    --property print.value=true \
+    --isolation-level read_committed \
+    --from-beginning
+
+$ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+    --topic bbg-approved-invalid \
     --formatter kafka.tools.DefaultMessageFormatter \
     --property print.key=true \
     --property print.value=true \
@@ -74,13 +88,6 @@ deleteall /brokers/topics/yourtopic
 If this happens, manually edit the local offset checkpoint file to be consistent with highWatermark.
 $ vi /tmp/kafka-streams/approval-cache-processor/global/.checkpoint
 
-
-Eclipse IDE Debug Shell to check the content of the store:
-    org.apache.kafka.streams.state.KeyValueIterator itr = store.all(); while (itr.hasNext()) System.out.println(itr.next());
-
-    store.get(new Token("789", TokenType.AllocToken, Entity.Bloomberg))
-
-    store.put(new Token("789", TokenType.AllocToken, Entity.Bloomberg), ValueAndTimestamp.make(new ApprovalDetails("789_sean_hack", TokenType.AllocToken, Entity.Bloomberg, null), org.apache.kafka.common.utils.Time.SYSTEM.milliseconds()))
 
 
 # Swagger UI link:
@@ -133,8 +140,9 @@ $ mvn exec:java -Dexec.mainClass=sean.RetractApproval
 
 QUESTIONS:
 0. should server really handle updating the cache? why can't client do it?
-   if server, how long should server wait before checking the store after producing the update message? currently every 10ms
-              do we really need to modify both event-level and alloc-level cache entry?
+   if server:
+      how long should server wait before checking the store after producing the update message? currently every 10ms
+      do we really need to modify both event-level and alloc-level cache entry?
 
 1. configurations
     message retention period for different topics? 1 week? how much disk space will it use?
@@ -142,6 +150,8 @@ QUESTIONS:
     how long should the join window be? 1 hour?
     what time semantics to use? event time?
     use avro serialization?
+    how to properly handle streams processing exceptions other than deserialization/production exceptions?
+    choose CONTINUE with a custom ProductionExceptionHandler seems to always cause the "GlobalStateManagerImpl.restoreState" issue which causes start-up to fail -WTF??
 
 2. where to store zookeeper/kafka broker/kafka streams app logs? local disk or NFS?
 
@@ -164,7 +174,7 @@ QUESTIONS:
    seen this error once due to POOR exception handling:
       "All stream threads have died. The instance will be in error state and should be closed.""
 
-9. how to manipulate the store at runtime? JMX or REST?
+9. how to manipulate the store/cache at runtime? JMX or REST?
 
 10. can we deploy this solution to run in parallel with current?
 
