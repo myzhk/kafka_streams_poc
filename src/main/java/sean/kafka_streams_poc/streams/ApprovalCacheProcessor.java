@@ -4,11 +4,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 
-import javax.annotation.PostConstruct;
+import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.utils.Bytes;
@@ -16,9 +16,7 @@ import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StoreQueryParameters;
 import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.Topology;
-import org.apache.kafka.streams.errors.LogAndContinueExceptionHandler;
 import org.apache.kafka.streams.kstream.Branched;
 import org.apache.kafka.streams.kstream.JoinWindows;
 import org.apache.kafka.streams.kstream.KStream;
@@ -35,6 +33,7 @@ import org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStore;
 import org.apache.kafka.streams.state.internals.StateStoreProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -47,42 +46,38 @@ import sean.kafka_streams_poc.domain.ApprovalDetails;
 import sean.kafka_streams_poc.domain.ApprovalDetailsWithProcessingInstruction;
 import sean.kafka_streams_poc.domain.Token;
 import sean.kafka_streams_poc.domain.TokenType;
-import sean.kafka_streams_poc.serdes.JSONSerde;
-import sean.kafka_streams_poc.streams.exception.handler.ProductionLogAndContinueExceptionHandler;
 
 @Component
 public class ApprovalCacheProcessor implements SmartLifecycle {
 
 	static final Logger LOG = LoggerFactory.getLogger(ApprovalCacheProcessor.class);
-	
 	static final CancelJoiner CANCEL_LEFT_JOINER = new CancelJoiner();
 	static final ToCacheEntryMapper TO_CACHE_ENTRY_MAPPER = new ToCacheEntryMapper();
 	
 	private volatile boolean running;
+	
 	private KafkaStreams streams;
-	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
 	
 	private KafkaProducer<Token, ApprovalDetails> producer;
 	
-	@PostConstruct
-    private void init() {
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "approval-cache-processor");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        props.put(StreamsConfig.STATE_DIR_CONFIG, "/home/Pi/tmp/kafka-streams");
-        props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_BETA);
-        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, JSONSerde.class);
-        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JSONSerde.class);
-        props.put(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG, LogAndContinueExceptionHandler.class);
-        props.put(StreamsConfig.DEFAULT_PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG, ProductionLogAndContinueExceptionHandler.class);
-        props.put(StreamsConfig.TASK_TIMEOUT_MS_CONFIG, 10000);
-        
+	private String storeName;
+	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
+	
+	@Inject
+	public ApprovalCacheProcessor(@Value("#{${streamsProps}}") Map<String, String> streamsProps,
+                                  @Value("#{${producerProps}}") Map<String, String> producerProps,
+								  @Value("${topic.approved}") String approvedTopic,
+								  @Value("${topic.invalid}") String invalidTopic,
+								  @Value("${topic.cancel}") String cancelTopic,
+								  @Value("${topic.cache}") String cacheTopic,
+								  @Value("${store.name}") String storeName) {
+		
         final StreamsBuilder builder = new StreamsBuilder();
         
-        KStream<Token, ApprovalCancel> cancelStream = builder.stream("bbg-cancel");
+        KStream<Token, ApprovalCancel> cancelStream = builder.stream(cancelTopic);
         
-        Map<String, KStream<Token, ApprovalDetails>> approvedStreamMap = builder.<Token, ApprovalDetails>stream("bbg-approved")
-        		.split(Named.as("bbg-approved-"))
+        Map<String, KStream<Token, ApprovalDetails>> approvedStreamMap = builder.<Token, ApprovalDetails>stream(approvedTopic)
+        		.split(Named.as(approvedTopic + "-"))
         		.branch((t, ad) -> t == null ||
                                    ad == null ||
                                    TokenType.EventToken != t.type ||
@@ -91,39 +86,30 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
                         Branched.as("invalid"))
         		.defaultBranch(Branched.as("valid"));
         
-        approvedStreamMap.get("bbg-approved-invalid").to("bbg-approved-invalid");
-        approvedStreamMap.get("bbg-approved-valid")
-                         .leftJoin(cancelStream, 
+        approvedStreamMap.get(approvedTopic + "-invalid").to(invalidTopic);
+        approvedStreamMap.get(approvedTopic + "-valid")
+                         .leftJoin(cancelStream,
                                    CANCEL_LEFT_JOINER,
                                    JoinWindows.of(Duration.ofMinutes(2)))
                          .flatMap(TO_CACHE_ENTRY_MAPPER)
-                         .to("cache-operations");
+                         .to(cacheTopic);
         
-        // KTable is always timestamped!
-        // https://kafka.apache.org/documentation/streams/developer-guide/processor-api.html#timestamped-state-stores
-        // see {@link TableSourceNode#writeToTopology(InternalTopologyBuilder)}
-        //
-        // also, global table always has "auto.offset.reset" set to "earliest"
-        builder.globalTable("cache-operations", Materialized.<Token, ApprovalDetails, KeyValueStore<Bytes, byte[]>>as("approval-cache"));
+        // global table always has "auto.offset.reset" set to "earliest"
+        // hence if you delete the state dir, it will re-build from earliest messages
+        this.storeName = storeName;
+        builder.globalTable(cacheTopic, Materialized.<Token, ApprovalDetails, KeyValueStore<Bytes, byte[]>>as(storeName));
         
         final Topology topology = builder.build();
-        streams = new KafkaStreams(topology, props);
-        
+        this.streams = new KafkaStreams(topology, MapUtils.toProperties(streamsProps));
         LOG.info(topology.describe().toString());
         
-		Properties producerProps = new Properties();
-		producerProps.put("bootstrap.servers", "localhost:9092");
-		producerProps.put("enable.idempotence", true);
-		producerProps.put("key.serializer", JSONSerde.class);
-		producerProps.put("value.serializer", JSONSerde.class);
-
-		this.producer = new KafkaProducer<>(producerProps);
+		this.producer = new KafkaProducer<>(MapUtils.toProperties(producerProps));
     }
 	
 	@Override
 	public void stop() {
 		this.running = false;
-		streams.close();
+		this.streams.close();
 	}
 
 	@Override
@@ -140,16 +126,21 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	
 	@Override
 	public void start() {
-    	streams.start();
+    	this.streams.start();
+
+        this.store = streams.store(StoreQueryParameters.fromNameAndType(storeName, QueryableStoreTypes.<Token, ApprovalDetails>keyValueStore()));
+
+        this.running = true;
+
+        /* see {@link GlobalStateStoreProvider#stores(String, QueryableStoreType)} for how StateStoreProvider wraps an read-only facade on top of the underlying store
+           by supplying a custom QueryableStoreType, we can get a write-able store, but do we really want to do it??
+           
+           also, table is always timestamped!
+           see https://kafka.apache.org/documentation/streams/developer-guide/processor-api.html#timestamped-state-stores, and
+           see {@link TableSourceNode#writeToTopology(InternalTopologyBuilder)} */
         
-        // see {@link GlobalStateStoreProvider#stores(String, QueryableStoreType)} for how StateStoreProvider wraps an read-only facade on top of the underlying store
-        store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", QueryableStoreTypes.<Token, ApprovalDetails>keyValueStore()));
-        
-        // this is a write-able store, but do we really want to do it?
         // MeteredTimestampedKeyValueStore<Token, ApprovalDetails> store = streams.store(StoreQueryParameters.fromNameAndType("approval-cache", new MeteredTimestampedKeyValueStoreType<>()));
         // store.put(new Token("789", TokenType.AllocToken, Entity.Bloomberg), ValueAndTimestamp.make(new ApprovalDetails("789_sean_hack", TokenType.AllocToken, Entity.Bloomberg, null), Time.SYSTEM.milliseconds()));
-        
-        this.running = true;
     }
     
 	// store is guaranteed to be available when REST controller accesses it, because web server's start phase is Integer.MAX_VALUE - 1

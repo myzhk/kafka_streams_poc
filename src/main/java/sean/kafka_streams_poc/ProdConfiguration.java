@@ -24,5 +24,4 @@ public class ProdConfiguration {
 				           "http://www.sean.com/license",
 				           Collections.emptyList());
 	}
-	
 }

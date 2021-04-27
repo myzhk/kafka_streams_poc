@@ -88,6 +88,7 @@ deleteall /brokers/topics/yourtopic
 If this happens, manually edit the local offset checkpoint file to be consistent with highWatermark.
 $ vi /tmp/kafka-streams/approval-cache-processor/global/.checkpoint
 
+# GlobalStreamThread.run() is main store-update-loop to keep all Global State Stores updated.
 
 
 # Swagger UI link:

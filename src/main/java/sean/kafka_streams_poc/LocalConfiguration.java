@@ -23,6 +23,5 @@ public class LocalConfiguration {
 				           "Null License",
 				           "http://www.sean.com/license",
 				           Collections.emptyList());
-	}
-	
+	}	
 }
