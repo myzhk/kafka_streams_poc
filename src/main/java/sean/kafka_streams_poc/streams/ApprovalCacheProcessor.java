@@ -58,6 +58,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	
 	private KafkaStreams streams;
 	
+	private String cacheTopic;
 	private KafkaProducer<Token, ApprovalDetails> producer;
 	
 	private String storeName;
@@ -71,6 +72,8 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 								  @Value("${topic.cancel}") String cancelTopic,
 								  @Value("${topic.cache}") String cacheTopic,
 								  @Value("${store.name}") String storeName) {
+		
+		this.cacheTopic = cacheTopic; 
 		
         final StreamsBuilder builder = new StreamsBuilder();
         
@@ -109,6 +112,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	@Override
 	public void stop() {
 		this.running = false;
+		this.producer.close();
 		this.streams.close();
 	}
 
@@ -150,7 +154,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	}
     
     public void updateApprovalDetails(ApprovalDetails ad) {
-    	producer.send(new ProducerRecord<Token, ApprovalDetails>("cache-operations", ad.token, ad));
+    	producer.send(new ProducerRecord<Token, ApprovalDetails>(this.cacheTopic, ad.token, ad));
     }
     
     static class CancelJoiner implements ValueJoiner<ApprovalDetails, ApprovalCancel, ApprovalDetailsWithProcessingInstruction> {
