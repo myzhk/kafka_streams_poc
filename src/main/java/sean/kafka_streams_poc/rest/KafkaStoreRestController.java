@@ -122,9 +122,13 @@ public class KafkaStoreRestController {
 	              response = List.class)
 	public List<ApprovalDetails> findAllApprovalDetails() {
 		List<ApprovalDetails> result = new ArrayList<>();
-		KeyValueIterator<Token, ApprovalDetails> itr = approvalStreamsProcessor.getReadOnlyStore().all(); 
-		while (itr.hasNext()) {
-			result.add(itr.next().value);
+		KeyValueIterator<Token, ApprovalDetails> itr = approvalStreamsProcessor.getReadOnlyStore().all();
+		try {
+			while (itr.hasNext()) {
+				result.add(itr.next().value);
+			}
+		} finally {
+			itr.close();
 		}
 		return result;
 	}

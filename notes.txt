@@ -40,7 +40,7 @@ $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-ap
 >{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"}|{"_t":"as","token":{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"},"approvalDetails":[{"_t":"ad","allocId":"888_a","entity":"Bloomberg","taserApprovalId":"taser_888_a","economics":"some_details","marked":false},{"_t":"ad","allocId":"888_b","entity":"Bloomberg","taserApprovalId":"taser_888_b","economics":"some_details","marked":false}]}
 
 $ bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic bbg-cancel --producer-property enable.idempotence=true  --request-required-acks all --property "parse.key=true" --property "key.separator=|"
->{"_t":"tk","tokenId":"888","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
+>{"_t":"tk","tokenId":"123","type":"EventToken","entity":"Bloomberg"}|{"_t": "ac"}
 
 $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --topic cache-operations \
