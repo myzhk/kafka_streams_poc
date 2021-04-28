@@ -47,6 +47,7 @@ $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --formatter kafka.tools.DefaultMessageFormatter \
     --property print.key=true \
     --property print.value=true \
+    --property print.offset=true \
     --isolation-level read_committed \
     --from-beginning
 
@@ -55,8 +56,14 @@ $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --formatter kafka.tools.DefaultMessageFormatter \
     --property print.key=true \
     --property print.value=true \
+    --property print.offset=true \
     --isolation-level read_committed \
     --from-beginning
+
+
+$ bin/kafka-consumer-groups.sh --list --bootstrap-server localhost:9092
+$ bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group xxxx
+
 
 # reset Streams application state
 $ rm -fr /tmp/kafka-streams/approval-cache-processor/

@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import javax.inject.Inject;
 
@@ -37,7 +38,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 
 import sean.kafka_streams_poc.domain.ApprovalCancel;
@@ -79,12 +79,31 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
         
         KStream<Token, ApprovalCancel> cancelStream = builder.stream(cancelTopic);
         
+        // 2.7 code
+        /*
+        @SuppressWarnings("unchecked")
+		KStream<Token, ApprovalDetails>[] branches = builder.<Token, ApprovalDetails>stream(approvedTopic)
+        		.branch((t, ad) -> t == null ||
+        		                   ad == null ||
+        		                   TokenType.EventToken != t.type ||
+        		                   !Objects.equals(t, ad.token) ||
+        		                   CollectionUtils.isEmpty(ad.approvalDetails),
+        		        (t, ad) -> true);
+        
+        branches[0].to(invalidTopic);
+        branches[1].leftJoin(cancelStream,
+                             CANCEL_LEFT_JOINER,
+                             JoinWindows.of(Duration.ofMinutes(2)))
+                   .flatMap(TO_CACHE_ENTRY_MAPPER)
+                   .to(cacheTopic);
+        */
+        
         Map<String, KStream<Token, ApprovalDetails>> approvedStreamMap = builder.<Token, ApprovalDetails>stream(approvedTopic)
         		.split(Named.as(approvedTopic + "-"))
         		.branch((t, ad) -> t == null ||
                                    ad == null ||
                                    TokenType.EventToken != t.type ||
-                                   !Objects.equal(t, ad.token) ||
+                                   !Objects.equals(t, ad.token) ||
                                    CollectionUtils.isEmpty(ad.approvalDetails), 
                         Branched.as("invalid"))
         		.defaultBranch(Branched.as("valid"));
