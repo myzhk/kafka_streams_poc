@@ -1,0 +1,85 @@
+[
+  {
+    "namespace": "sean.kafka_streams_poc.avro.domain",
+    "type": "enum",
+    "name": "TokenType",
+    "symbols": [
+      "EventToken",
+      "AllocToken"
+    ]
+  },
+  {
+    "namespace": "sean.kafka_streams_poc.avro.domain",
+    "type": "enum",
+    "name": "Entity",
+    "symbols": [
+      "Bloomberg",
+      "TradeWeb",
+      "Traiana"
+    ]
+  },
+  {
+    "namespace": "sean.kafka_streams_poc.avro.domain",
+    "type": "record",
+    "name": "Token",
+    "fields": [
+      {
+        "name": "tokenId",
+        "type": "string"
+      },
+      {
+        "name": "type",
+        "type": "sean.kafka_streams_poc.avro.domain.TokenType"
+      },
+      {
+        "name": "entity",
+        "type": "sean.kafka_streams_poc.avro.domain.Entity"
+      }
+    ]
+  },
+  {
+    "namespace": "sean.kafka_streams_poc.avro.domain",
+    "type": "record",
+    "name": "ApprovalDetail",
+    "fields": [
+      {
+        "name": "allocId",
+        "type": "string"
+      },
+      {
+        "name": "entity",
+        "type": "sean.kafka_streams_poc.avro.domain.Entity"
+      },
+      {
+        "name": "taserApprovalId",
+        "type": "string"
+      },
+      {
+        "name": "economics",
+        "type": "string"
+      },
+      {
+        "name": "marked",
+        "type": "boolean"
+      }
+    ]
+  },
+  {
+    "namespace": "sean.kafka_streams_poc.avro.domain",
+    "type": "record",
+    "name": "ApprovalDetails",
+    "fields": [
+      {
+        "name": "token",
+        "type": "sean.kafka_streams_poc.avro.domain.Token"
+      },
+      {
+        "name": "ApprovalDetails",
+        "type": {
+          "type": "array",
+          "items": "sean.kafka_streams_poc.avro.domain.ApprovalDetail"
+        }
+      }
+    ]
+  }
+]

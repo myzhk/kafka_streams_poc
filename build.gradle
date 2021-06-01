@@ -9,7 +9,10 @@ version = '0.0.1-SNAPSHOT'
 sourceCompatibility = '1.8'
 
 repositories {
-	mavenCentral()
+	maven { url 'http://maven.aliyun.com/nexus/content/repositories/google' }
+	maven { url 'http://maven.aliyun.com/nexus/content/groups/public/' }
+	maven { url 'https://packages.confluent.io/maven/' }
+//	mavenCentral()
 }
 
 dependencies {
@@ -21,6 +24,9 @@ dependencies {
 	implementation group: 'com.google.guava', name: 'guava', version: '30.1.1-jre'
     implementation group: 'io.springfox', name: 'springfox-boot-starter', version: '3.0.0'
 	implementation group: 'javax.inject', name: 'javax.inject', version: '1'
+	implementation group: 'org.apache.avro', name: 'avro', version: '1.9.1'
+	implementation group: 'io.confluent', name: 'kafka-avro-serializer', version: '6.0.0'
+	implementation group: 'io.confluent', name: 'kafka-streams-avro-serde', version: '6.0.0'
 	
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }

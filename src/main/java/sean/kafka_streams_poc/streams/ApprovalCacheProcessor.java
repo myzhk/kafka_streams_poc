@@ -59,10 +59,10 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	private KafkaStreams streams;
 	
 	private String cacheTopic;
-	private KafkaProducer<Token, ApprovalDetails> producer;
+	private KafkaProducer<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails> producer;
 	
 	private String storeName;
-	private ReadOnlyKeyValueStore<Token, ApprovalDetails> store;
+	private ReadOnlyKeyValueStore<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails> store;
 	
 	@Inject
 	public ApprovalCacheProcessor(@Value("#{${streamsProps}}") Map<String, String> streamsProps,
@@ -98,22 +98,22 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
                    .to(cacheTopic);
         */
         
-        Map<String, KStream<Token, ApprovalDetails>> approvedStreamMap = builder.<Token, ApprovalDetails>stream(approvedTopic)
+        Map<String, KStream<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails>> approvedStreamMap = builder.<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails>stream(approvedTopic)
         		.split(Named.as(approvedTopic + "-"))
         		.branch((t, ad) -> t == null ||
                                    ad == null ||
-                                   TokenType.EventToken != t.type ||
-                                   !Objects.equals(t, ad.token) ||
-                                   CollectionUtils.isEmpty(ad.approvalDetails), 
+//                                   TokenType.EventToken != t.type ||
+//                                   !Objects.equals(t, ad.token) ||
+                                   CollectionUtils.isEmpty(ad.getApprovalDetails()),
                         Branched.as("invalid"))
         		.defaultBranch(Branched.as("valid"));
         
         approvedStreamMap.get(approvedTopic + "-invalid").to(invalidTopic);
         approvedStreamMap.get(approvedTopic + "-valid")
-                         .leftJoin(cancelStream,
-                                   CANCEL_LEFT_JOINER,
-                                   JoinWindows.of(Duration.ofMinutes(2)))
-                         .flatMap(TO_CACHE_ENTRY_MAPPER)
+//                         .leftJoin(cancelStream,
+//                                   CANCEL_LEFT_JOINER,
+//                                   JoinWindows.of(Duration.ofMinutes(2)))
+//                         .flatMap(TO_CACHE_ENTRY_MAPPER)
                          .to(cacheTopic);
         
         // global table always has "auto.offset.reset" set to "earliest"
@@ -151,7 +151,7 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
 	public void start() {
     	this.streams.start();
 
-        this.store = streams.store(StoreQueryParameters.fromNameAndType(storeName, QueryableStoreTypes.<Token, ApprovalDetails>keyValueStore()));
+        this.store = streams.store(StoreQueryParameters.fromNameAndType(storeName, QueryableStoreTypes.<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails>keyValueStore()));
 
         this.running = true;
 
@@ -168,12 +168,12 @@ public class ApprovalCacheProcessor implements SmartLifecycle {
     
 	// store is guaranteed to be available when REST controller accesses it, because web server's start phase is Integer.MAX_VALUE - 1
 	// see {@link WebServerStartStopLifecycle}
-    public ReadOnlyKeyValueStore<Token, ApprovalDetails> getReadOnlyStore() {
+    public ReadOnlyKeyValueStore<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails> getReadOnlyStore() {
 		return store;
 	}
     
     public void updateApprovalDetails(ApprovalDetails ad) {
-    	producer.send(new ProducerRecord<Token, ApprovalDetails>(this.cacheTopic, ad.token, ad));
+		producer.send(new ProducerRecord<Token, sean.kafka_streams_poc.avro.domain.ApprovalDetails>(this.cacheTopic, ad.token, sean.kafka_streams_poc.avro.domain.ApprovalDetails.fromApprovalDetails(ad)));
     }
     
     static class CancelJoiner implements ValueJoiner<ApprovalDetails, ApprovalCancel, ApprovalDetailsWithProcessingInstruction> {
